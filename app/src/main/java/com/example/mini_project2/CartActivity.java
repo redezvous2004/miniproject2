@@ -2,7 +2,6 @@ package com.example.mini_project2;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -27,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 
 public class CartActivity extends AppCompatActivity {
+
     private RecyclerView rvCartItems;
     private TextView tvTotalAmount;
     private MaterialButton btnCheckout;
@@ -69,6 +69,7 @@ public class CartActivity extends AppCompatActivity {
 
     private void loadCart() {
         if (!sessionManager.isLoggedIn()) {
+            adapter.updateData(new ArrayList<>());
             tvTotalAmount.setText("0 đ");
             btnCheckout.setEnabled(false);
             Toast.makeText(this, "Vui lòng đăng nhập để xem giỏ hàng", Toast.LENGTH_SHORT).show();
@@ -81,11 +82,15 @@ public class CartActivity extends AppCompatActivity {
 
             if (pendingOrder != null) {
                 List<OrderDetail> details = db.orderDetailDao().getDetailsByOrder(pendingOrder.getId());
+
                 runOnUiThread(() -> {
-                    adapter.updateData(details);
+                    adapter.updateData(details != null ? details : new ArrayList<>());
+
                     NumberFormat formatter = NumberFormat.getInstance(new Locale("vi", "VN"));
                     tvTotalAmount.setText(formatter.format(pendingOrder.getTotalAmount()) + " đ");
-                    btnCheckout.setEnabled(!details.isEmpty());
+
+                    boolean canCheckout = details != null && !details.isEmpty();
+                    btnCheckout.setEnabled(canCheckout);
                 });
             } else {
                 runOnUiThread(() -> {
@@ -98,28 +103,69 @@ public class CartActivity extends AppCompatActivity {
     }
 
     private void checkout() {
-        if (pendingOrder == null) return;
+        if (pendingOrder == null) {
+            Toast.makeText(this, "Không có đơn hàng để thanh toán", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        new AlertDialog.Builder(this)
-                .setTitle("Xác nhận thanh toán")
-                .setMessage("Bạn có chắc chắn muốn thanh toán đơn hàng này?")
-                .setPositiveButton("Thanh toán", (dialog, which) -> {
-                    AppDatabase.databaseWriteExecutor.execute(() -> {
-                        // Update order date and status
-                        String date = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(new Date());
-                        db.orderDao().updateStatus(pendingOrder.getId(), "Paid");
+        AppDatabase.databaseWriteExecutor.execute(() -> {
+            List<OrderDetail> details = db.orderDetailDao().getDetailsByOrder(pendingOrder.getId());
 
-                        runOnUiThread(() -> {
-                            Toast.makeText(this, "Thanh toán thành công!", Toast.LENGTH_SHORT).show();
-                            // Navigate to invoice
-                            Intent intent = new Intent(this, InvoiceActivity.class);
-                            intent.putExtra("orderId", pendingOrder.getId());
-                            startActivity(intent);
-                            finish();
-                        });
+            runOnUiThread(() -> {
+                if (details == null || details.isEmpty()) {
+                    Toast.makeText(this, "Giỏ hàng đang trống", Toast.LENGTH_SHORT).show();
+                    btnCheckout.setEnabled(false);
+                    return;
+                }
+
+                new AlertDialog.Builder(this)
+                        .setTitle("Xác nhận thanh toán")
+                        .setMessage("Bạn có chắc chắn muốn thanh toán đơn hàng này?")
+                        .setPositiveButton("Thanh toán", (dialog, which) -> processCheckout())
+                        .setNegativeButton("Hủy", null)
+                        .show();
+            });
+        });
+    }
+
+    private void processCheckout() {
+        btnCheckout.setEnabled(false);
+
+        AppDatabase.databaseWriteExecutor.execute(() -> {
+            try {
+                int orderId = pendingOrder.getId();
+                String date = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+                        .format(new Date());
+
+                // Nếu Order entity có setter thì cập nhật đầy đủ rồi update
+                Order order = db.orderDao().getOrderById(orderId);
+                if (order == null) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(this, "Không tìm thấy đơn hàng", Toast.LENGTH_SHORT).show();
+                        btnCheckout.setEnabled(true);
                     });
-                })
-                .setNegativeButton("Hủy", null)
-                .show();
+                    return;
+                }
+
+                order.setStatus("Paid");
+                order.setOrderDate(date);
+                db.orderDao().update(order);
+
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "Thanh toán thành công!", Toast.LENGTH_SHORT).show();
+
+                    Intent intent = new Intent(CartActivity.this, InvoiceActivity.class);
+                    intent.putExtra("orderId", orderId);
+                    startActivity(intent);
+                    finish();
+                });
+
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "Thanh toán thất bại", Toast.LENGTH_SHORT).show();
+                    btnCheckout.setEnabled(true);
+                });
+            }
+        });
     }
 }
