@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 
 public class InvoiceActivity extends AppCompatActivity {
+
     private TextView tvOrderId, tvOrderDate, tvCustomerName, tvStatus, tvTotalAmount;
     private RecyclerView rvInvoiceItems;
     private MaterialButton btnBackHome;
@@ -34,6 +35,26 @@ public class InvoiceActivity extends AppCompatActivity {
 
         db = AppDatabase.getInstance(this);
 
+        initViews();
+        setupRecyclerView();
+        setupActions();
+
+        Intent intent = getIntent();
+        if (intent == null || !intent.hasExtra("orderId")) {
+            finish();
+            return;
+        }
+
+        int orderId = intent.getIntExtra("orderId", -1);
+        if (orderId <= 0) {
+            finish();
+            return;
+        }
+
+        loadInvoice(orderId);
+    }
+
+    private void initViews() {
         tvOrderId = findViewById(R.id.tvOrderId);
         tvOrderDate = findViewById(R.id.tvOrderDate);
         tvCustomerName = findViewById(R.id.tvCustomerName);
@@ -41,21 +62,17 @@ public class InvoiceActivity extends AppCompatActivity {
         tvTotalAmount = findViewById(R.id.tvTotalAmount);
         rvInvoiceItems = findViewById(R.id.rvInvoiceItems);
         btnBackHome = findViewById(R.id.btnBackHome);
+    }
 
+    private void setupRecyclerView() {
         rvInvoiceItems.setLayoutManager(new LinearLayoutManager(this));
         adapter = new OrderDetailAdapter(new ArrayList<>(), db);
         rvInvoiceItems.setAdapter(adapter);
+    }
 
-        int orderId = getIntent().getIntExtra("orderId", -1);
-        if (orderId == -1) {
-            finish();
-            return;
-        }
-
-        loadInvoice(orderId);
-
+    private void setupActions() {
         btnBackHome.setOnClickListener(v -> {
-            Intent intent = new Intent(this, MainActivity.class);
+            Intent intent = new Intent(InvoiceActivity.this, MainActivity.class);
             intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
             finish();
@@ -65,6 +82,7 @@ public class InvoiceActivity extends AppCompatActivity {
     private void loadInvoice(int orderId) {
         AppDatabase.databaseWriteExecutor.execute(() -> {
             Order order = db.orderDao().getOrderById(orderId);
+
             if (order == null) {
                 runOnUiThread(this::finish);
                 return;
@@ -74,14 +92,20 @@ public class InvoiceActivity extends AppCompatActivity {
             List<OrderDetail> details = db.orderDetailDao().getDetailsByOrder(orderId);
 
             runOnUiThread(() -> {
-                NumberFormat formatter = NumberFormat.getInstance(new Locale("vi", "VN"));
                 tvOrderId.setText("#" + order.getId());
-                tvOrderDate.setText(order.getOrderDate());
-                tvCustomerName.setText(user != null ? user.getFullName() : "N/A");
-                tvStatus.setText(order.getStatus());
-                tvTotalAmount.setText(formatter.format(order.getTotalAmount()) + " đ");
-                adapter.updateData(details);
+                tvOrderDate.setText(order.getOrderDate() != null ? order.getOrderDate() : "N/A");
+                tvCustomerName.setText(user != null && user.getFullName() != null
+                        ? user.getFullName()
+                        : "N/A");
+                tvStatus.setText(order.getStatus() != null ? order.getStatus() : "N/A");
+                tvTotalAmount.setText(formatCurrency(order.getTotalAmount()));
+                adapter.updateData(details != null ? details : new ArrayList<>());
             });
         });
+    }
+
+    private String formatCurrency(double amount) {
+        NumberFormat formatter = NumberFormat.getInstance(new Locale("vi", "VN"));
+        return formatter.format(amount) + " đ";
     }
 }
